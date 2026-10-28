@@ -2,112 +2,203 @@ name: Build Paid Android APK
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: paid-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Build Paid APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
+      # 1. جلب ملفات المشروع
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. إعداد Node.js دون cache لتجنب اشتراط ملف القفل
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
+      # 3. إعداد Java لبناء Android
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: "17"
 
-      - name: Install dependencies
+      # 4. التحقق من الملفات الأساسية قبل تثبيت التبعيات
+      - name: Validate project files
         shell: bash
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci --legacy-peer-deps
-          else
-            npm install --legacy-peer-deps
-          fi
+          set -eu
 
-      - name: Validate required files
-        shell: bash
-        run: |
+          test -f package.json || {
+            echo "::error::package.json is missing"
+            exit 1
+          }
+
           test -f src/admin.html || {
-            echo "::error::Missing src/admin.html"
+            echo "::error::src/admin.html is missing"
             exit 1
           }
 
           test -f keys/public_key.txt || {
-            echo "::error::Missing keys/public_key.txt"
+            echo "::error::keys/public_key.txt is missing"
             exit 1
           }
 
           test -f scripts/build-variants.js || {
-            echo "::error::Missing scripts/build-variants.js"
+            echo "::error::scripts/build-variants.js is missing"
             exit 1
           }
 
           test -f scripts/write-capacitor-config.js || {
-            echo "::error::Missing scripts/write-capacitor-config.js"
+            echo "::error::scripts/write-capacitor-config.js is missing"
             exit 1
           }
 
-      - name: Configure paid variant
-        run: npm run config:paid
+          node --version
+          npm --version
+          java -version
 
-      - name: Build paid web application
-        run: npm run build:apk-web
-
-      - name: Verify paid web assets
+      # 5. تثبيت التبعيات دون npm ci أو cache
+      - name: Install dependencies
         shell: bash
         run: |
-          test -s www/index.html || {
-            echo "::error::Paid web application was not generated"
-            exit 1
-          }
+          set -eu
+          npm install --legacy-peer-deps
 
-          test -s www/xlsx.full.min.js || {
+      # 6. التأكد من توفر Capacitor ومكتبة Excel محليًا
+      - name: Verify required packages
+        shell: bash
+        run: |
+          set -eu
+
+          node -e "require.resolve('@capacitor/cli')"
+          node -e "require.resolve('@capacitor/android')"
+
+          test -f node_modules/xlsx/dist/xlsx.full.min.js || {
             echo "::error::Local XLSX library is missing"
             exit 1
           }
 
-      - name: Add Android platform
-        run: npx cap add android
-
-      - name: Sync Android platform
-        run: npx cap sync android
-
-      - name: Verify Gradle wrapper
+      # 7. ضبط إعداد النسخة المدفوعة
+      - name: Configure paid variant
         shell: bash
         run: |
+          set -eu
+          npm run config:paid
+
+      # 8. بناء واجهة التطبيق وفحوص التسرب الموجودة في السكربت
+      - name: Build paid web application
+        shell: bash
+        run: |
+          set -eu
+          npm run build:apk-web
+
+      # 9. التحقق من الملفات الناتجة قبل إنشاء Android
+      - name: Verify paid web assets
+        shell: bash
+        run: |
+          set -eu
+
+          test -s www/index.html || {
+            echo "::error::www/index.html was not generated"
+            exit 1
+          }
+
+          test -s www/xlsx.full.min.js || {
+            echo "::error::Bundled XLSX library is missing"
+            exit 1
+          }
+
+          if grep -q 'BUILD_MODE = "ADMIN"' www/index.html; then
+            echo "::error::ADMIN mode remains in the paid application"
+            exit 1
+          fi
+
+          if ! grep -q 'BUILD_MODE = "APK"' www/index.html; then
+            echo "::error::Paid APK mode was not detected"
+            exit 1
+          fi
+
+      # 10. إنشاء منصة Android من إعداد Capacitor الحالي
+      - name: Add Android platform
+        shell: bash
+        run: |
+          set -eu
+          npx cap add android
+
+      # 11. مزامنة ملفات الويب والإضافات مع Android
+      - name: Sync Capacitor Android
+        shell: bash
+        run: |
+          set -eu
+          npx cap sync android
+
+      # 12. التأكد من معرّف الحزمة وملفات Gradle
+      - name: Verify Android project
+        shell: bash
+        run: |
+          set -eu
+
           test -f android/gradlew || {
-            echo "::error::Gradle wrapper was not generated"
+            echo "::error::android/gradlew is missing"
+            exit 1
+          }
+
+          test -f android/app/build.gradle -o \
+               -f android/app/build.gradle.kts || {
+            echo "::error::Android app Gradle configuration is missing"
             exit 1
           }
 
           chmod +x android/gradlew
 
-      - name: Build Debug APK
-        working-directory: android
-        run: ./gradlew assembleDebug
+          grep -R -q 'com.hasralghiyab.app' \
+            android/app/build.gradle \
+            android/app/build.gradle.kts \
+            android/app/src/main/AndroidManifest.xml \
+            2>/dev/null || {
+              echo "::warning::Could not confirm application ID in the expected files"
+            }
 
+      # 13. بناء APK للاختبار
+      - name: Build Debug APK
+        shell: bash
+        working-directory: android
+        run: |
+          set -eu
+          ./gradlew --no-daemon assembleDebug
+
+      # 14. التأكد من وجود APK صالح من حيث الملف والحجم
       - name: Verify APK output
         shell: bash
         run: |
-          test -s android/app/build/outputs/apk/debug/app-debug.apk || {
-            echo "::error::APK output is missing or empty"
+          set -eu
+
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          test -s "$APK" || {
+            echo "::error::APK was not generated or is empty"
             exit 1
           }
 
-      - name: Upload APK
+          ls -lh "$APK"
+
+      # 15. رفع APK كملف قابل للتنزيل
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: hasr-alghiyab-paid-debug-apk
