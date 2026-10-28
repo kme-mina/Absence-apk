@@ -9,29 +9,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'temurin'
-        java-version: '17'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
-    - name: Install dependencies & Build
-      run: |
-        npm install
-        npx cap sync
-        cd android
-        ./gradlew assembleDebug
+      - name: Install dependencies and build web assets
+        run: |
+          cd "*_v3/hasr-project"
+          npm install
 
-    - name: Upload APK artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-debug
-        path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Add Android platform and sync Capacitor
+        run: |
+          cd "*_v3/hasr-project"
+          npx cap add android || true
+          npx cap sync android
+
+      - name: Build Android APK
+        run: |
+          cd "*_v3/hasr-project/android"
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: "*_v3/hasr-project/android/app/build/outputs/apk/debug/app-debug.apk"
