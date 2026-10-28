@@ -1,8 +1,12 @@
-name: Build Android APK
+name: Build Paid Android APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -15,25 +19,98 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
+          cache: npm
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
+          distribution: zulu
+          java-version: "17"
 
-      - name: Install and Build
+      - name: Install dependencies
+        shell: bash
         run: |
-          npm install --legacy-peer-deps
-          npx cap add android || true
-          npx cap sync android
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          if [ -f package-lock.json ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
 
-      - name: Upload APK artifact
+      - name: Validate required files
+        shell: bash
+        run: |
+          test -f src/admin.html || {
+            echo "::error::Missing src/admin.html"
+            exit 1
+          }
+
+          test -f keys/public_key.txt || {
+            echo "::error::Missing keys/public_key.txt"
+            exit 1
+          }
+
+          test -f scripts/build-variants.js || {
+            echo "::error::Missing scripts/build-variants.js"
+            exit 1
+          }
+
+          test -f scripts/write-capacitor-config.js || {
+            echo "::error::Missing scripts/write-capacitor-config.js"
+            exit 1
+          }
+
+      - name: Configure paid variant
+        run: npm run config:paid
+
+      - name: Build paid web application
+        run: npm run build:apk-web
+
+      - name: Verify paid web assets
+        shell: bash
+        run: |
+          test -s www/index.html || {
+            echo "::error::Paid web application was not generated"
+            exit 1
+          }
+
+          test -s www/xlsx.full.min.js || {
+            echo "::error::Local XLSX library is missing"
+            exit 1
+          }
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Sync Android platform
+        run: npx cap sync android
+
+      - name: Verify Gradle wrapper
+        shell: bash
+        run: |
+          test -f android/gradlew || {
+            echo "::error::Gradle wrapper was not generated"
+            exit 1
+          }
+
+          chmod +x android/gradlew
+
+      - name: Build Debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          test -s android/app/build/outputs/apk/debug/app-debug.apk || {
+            echo "::error::APK output is missing or empty"
+            exit 1
+          }
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug
-          path: "android/app/build/outputs/apk/debug/app-debug.apk"
+          name: hasr-alghiyab-paid-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
