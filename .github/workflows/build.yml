@@ -23,20 +23,18 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Install dependencies and build web assets
+      - name: Find project directory and build
         run: |
-          cd "*_v3/hasr-project"
+          # البحث التلقائي عن المجلد الذي يحتوي على ملف package.json والدخول إليه
+          PROJECT_DIR=$(find . -name "package.json" -not -path "*/node_modules/*" -exec dirname {} \;)
+          echo "Found project in: $PROJECT_DIR"
+          cd "$PROJECT_DIR"
+          
           npm install
-
-      - name: Add Android platform and sync Capacitor
-        run: |
-          cd "*_v3/hasr-project"
           npx cap add android || true
           npx cap sync android
-
-      - name: Build Android APK
-        run: |
-          cd "*_v3/hasr-project/android"
+          
+          cd android
           chmod +x gradlew
           ./gradlew assembleDebug
 
@@ -44,4 +42,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: "*_v3/hasr-project/android/app/build/outputs/apk/debug/app-debug.apk"
+          path: "**/app/build/outputs/apk/debug/app-debug.apk"
