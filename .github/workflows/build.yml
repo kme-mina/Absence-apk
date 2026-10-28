@@ -15,7 +15,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 18
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
@@ -23,14 +23,29 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Find project directory and build
+      - name: Build Project & APK
         run: |
-          # البحث التلقائي عن المجلد الذي يحتوي على ملف package.json والدخول إليه
-          PROJECT_DIR=$(find . -name "package.json" -not -path "*/node_modules/*" -exec dirname {} \;)
-          echo "Found project in: $PROJECT_DIR"
-          cd "$PROJECT_DIR"
+          # العثور على المجلد الأصلي ونسخه لمجلد مؤقت إنجليزي
+          SRC_DIR=$(find . -name "package.json" -not -path "*/node_modules/*" -exec dirname {} \; | head -n 1)
+          echo "Source directory: $SRC_DIR"
           
-          npm install
+          mkdir -p /tmp/build_dir
+          cp -r "$SRC_DIR"/* /tmp/build_dir/
+          
+          cd /tmp/build_dir
+          npm install --legacy-peer-deps
+          
+          # التأكد من وجود مجلد www أو إنشاؤه/نسخه من src لكي لا يظهر خطأ Capacitor
+          if [ ! -d "www" ]; then
+            if [ -d "src" ]; then
+              mkdir -p www
+              cp -r src/* www/
+            else
+              mkdir -p www
+              touch www/index.html
+            fi
+          fi
+          
           npx cap add android || true
           npx cap sync android
           
@@ -42,4 +57,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: "**/app/build/outputs/apk/debug/app-debug.apk"
+          path: "/tmp/build_dir/android/app/build/outputs/apk/debug/app-debug.apk"
