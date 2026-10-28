@@ -20,94 +20,68 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # 1. جلب ملفات المشروع
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. إعداد Node.js دون cache لتجنب اشتراط ملف القفل
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
 
-      # 3. إعداد Java لبناء Android
       - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: "17"
 
-      # 4. التحقق من الملفات الأساسية قبل تثبيت التبعيات
       - name: Validate project files
         shell: bash
         run: |
           set -eu
 
-          test -f package.json || {
-            echo "::error::package.json is missing"
-            exit 1
-          }
-
-          test -f src/admin.html || {
-            echo "::error::src/admin.html is missing"
-            exit 1
-          }
-
-          test -f keys/public_key.txt || {
-            echo "::error::keys/public_key.txt is missing"
-            exit 1
-          }
-
-          test -f scripts/build-variants.js || {
-            echo "::error::scripts/build-variants.js is missing"
-            exit 1
-          }
-
-          test -f scripts/write-capacitor-config.js || {
-            echo "::error::scripts/write-capacitor-config.js is missing"
-            exit 1
-          }
+          test -f package.json
+          test -f src/admin.html
+          test -f keys/public_key.txt
+          test -f scripts/build-variants.js
+          test -f scripts/write-capacitor-config.js
 
           node --version
           npm --version
           java -version
 
-      # 5. تثبيت التبعيات دون npm ci أو cache
       - name: Install dependencies
         shell: bash
         run: |
           set -eu
+
           npm install --legacy-peer-deps
 
-      # 6. التأكد من توفر Capacitor ومكتبة Excel محليًا
+          echo "=== Installed dependencies ==="
+          npm ls @capacitor/core @capacitor/cli @capacitor/android xlsx --depth=0
+
+          echo "=== npm omit configuration ==="
+          npm config get omit
+
       - name: Verify required packages
         shell: bash
         run: |
           set -eu
 
-          node -e "require.resolve('@capacitor/cli')"
-          node -e "require.resolve('@capacitor/android')"
+          node -e "console.log('Capacitor CLI:', require.resolve('@capacitor/cli'))"
+          node -e "console.log('Capacitor Android:', require.resolve('@capacitor/android/package.json'))"
+          node -e "console.log('Capacitor Core:', require.resolve('@capacitor/core'))"
 
           test -f node_modules/xlsx/dist/xlsx.full.min.js || {
             echo "::error::Local XLSX library is missing"
             exit 1
           }
 
-      # 7. ضبط إعداد النسخة المدفوعة
       - name: Configure paid variant
-        shell: bash
-        run: |
-          set -eu
-          npm run config:paid
+        run: npm run config:paid
 
-      # 8. بناء واجهة التطبيق وفحوص التسرب الموجودة في السكربت
       - name: Build paid web application
-        shell: bash
-        run: |
-          set -eu
-          npm run build:apk-web
+        run: npm run build:apk-web
 
-      # 9. التحقق من الملفات الناتجة قبل إنشاء Android
       - name: Verify paid web assets
         shell: bash
         run: |
@@ -133,48 +107,30 @@ jobs:
             exit 1
           fi
 
-      # 10. إنشاء منصة Android من إعداد Capacitor الحالي
       - name: Add Android platform
-        shell: bash
-        run: |
-          set -eu
-          npx cap add android
+        run: npx cap add android
 
-      # 11. مزامنة ملفات الويب والإضافات مع Android
       - name: Sync Capacitor Android
-        shell: bash
-        run: |
-          set -eu
-          npx cap sync android
+        run: npx cap sync android
 
-      # 12. التأكد من معرّف الحزمة وملفات Gradle
       - name: Verify Android project
         shell: bash
         run: |
           set -eu
 
           test -f android/gradlew || {
-            echo "::error::android/gradlew is missing"
+            echo "::error::Gradle wrapper is missing"
             exit 1
           }
 
-          test -f android/app/build.gradle -o \
-               -f android/app/build.gradle.kts || {
+          if [ ! -f android/app/build.gradle ] && \
+             [ ! -f android/app/build.gradle.kts ]; then
             echo "::error::Android app Gradle configuration is missing"
             exit 1
-          }
+          fi
 
           chmod +x android/gradlew
 
-          grep -R -q 'com.hasralghiyab.app' \
-            android/app/build.gradle \
-            android/app/build.gradle.kts \
-            android/app/src/main/AndroidManifest.xml \
-            2>/dev/null || {
-              echo "::warning::Could not confirm application ID in the expected files"
-            }
-
-      # 13. بناء APK للاختبار
       - name: Build Debug APK
         shell: bash
         working-directory: android
@@ -182,7 +138,6 @@ jobs:
           set -eu
           ./gradlew --no-daemon assembleDebug
 
-      # 14. التأكد من وجود APK صالح من حيث الملف والحجم
       - name: Verify APK output
         shell: bash
         run: |
@@ -197,7 +152,6 @@ jobs:
 
           ls -lh "$APK"
 
-      # 15. رفع APK كملف قابل للتنزيل
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
